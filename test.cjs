@@ -355,7 +355,9 @@ function load(opts = {}) {
         },
       },
       ProgressWindow: class {
-        changeHeadline() {}
+        changeHeadline(h) {
+          t.headlines = [...(t.headlines || []), h];
+        }
         addDescription(s) {
           notices.push(s);
         }
@@ -504,27 +506,31 @@ const run = async (name, fn) => {
     },
   );
 
+  const NO_REPORT = (t) => !t.http.some((h) => h.url.includes("zoteroatlas.com"));
+
   await run(
-    "first run: one screen, asked once; 'Don't send' sends nothing; holding as chosen",
+    "a new install: one question, holding updates; sharing starts on without one",
     async () => {
       const t = load({
-        firstRun: { usage: "no", updates: "off" },
-        http: () => ok200(catalogJson([])),
+        firstRun: { updates: "off" },
+        http: (m) => (m === "POST" ? { status: 204 } : ok200(catalogJson([]))),
       });
-      t.s.startup({ id: "a", version: "0.1.0", rootURI: "r/" });
+      t.s.startup({ id: "a", version: "1.4.0", rootURI: "r/" });
+      assert.equal(t.prefs["extensions.zotero-atlas.usage"], "yes");
+      assert.equal(t.prefs["extensions.zotero-atlas.updates"], "ask", "not holding until answered");
       t.s.onMainWindowLoad({ window: t.window });
       t.s.onMainWindowLoad({ window: t.window });
       assert.equal(t.timers.filter((x) => x.ms === 8000).length, 1, "one ask timer");
       t.flush();
-      await settle();
+      await settle(20);
       assert.equal(t.firstRun, 1);
-      assert.equal(t.prefs["extensions.zotero-atlas.usage"], "no");
       assert.equal(t.prefs["extensions.zotero-atlas.updates"], "off");
-      assert.ok(
-        !t.http.some((h) => h.url.includes("zoteroatlas.com")),
-        "nothing sent to zoteroatlas.com",
-      );
-      assert.ok(!t.prefs["extensions.zotero-atlas.id"], "no ID made");
+      assert.equal(t.prefs["extensions.zotero-atlas.usage"], "yes", "sharing isn't on the screen");
+      assert.equal(t.dialogs.length, 0);
+      assert.ok(!t.headlines, "no notice");
+      const posts = t.http.filter((h) => h.method === "POST");
+      assert.equal(posts.length, 1, "one report, with the first check");
+      assert.equal(JSON.parse(posts[0].body).event, "first-run");
       t.s.onMainWindowLoad({ window: t.window });
       t.flush();
       await settle();
@@ -532,42 +538,90 @@ const run = async (name, fn) => {
     },
   );
 
-  await run(
-    "first run: closing the screen keeps the recommended answers (send, hold)",
-    async () => {
-      const t = load({ http: (m) => (m === "POST" ? { status: 204 } : ok200(catalogJson([]))) });
-      t.s.startup({ id: "a", version: "0.1.0", rootURI: "r/" });
-      t.s.onMainWindowLoad({ window: t.window });
-      t.flush();
-      await settle();
-      assert.equal(t.prefs["extensions.zotero-atlas.usage"], "yes");
-      assert.equal(t.prefs["extensions.zotero-atlas.updates"], "hold");
-    },
-  );
+  await run("a new install: closing the screen keeps the recommended answer (hold)", async () => {
+    const t = load({ http: (m) => (m === "POST" ? { status: 204 } : ok200(catalogJson([]))) });
+    t.s.startup({ id: "a", version: "1.4.0", rootURI: "r/" });
+    t.s.onMainWindowLoad({ window: t.window });
+    t.flush();
+    await settle();
+    assert.equal(t.prefs["extensions.zotero-atlas.updates"], "hold");
+  });
 
   await run(
-    "first run: if the screen can't open, the usage question is asked plainly; updates stay unasked",
+    "a new install: if the screen can't open, the same question is asked plainly",
     async () => {
       const t = load({ firstRunFails: true, answer: [1], http: () => ok200(catalogJson([])) });
-      t.s.startup({ id: "a", version: "0.1.0", rootURI: "r/" });
+      t.s.startup({ id: "a", version: "1.4.0", rootURI: "r/" });
       t.s.onMainWindowLoad({ window: t.window });
       t.flush();
       await settle();
       assert.equal(t.dialogs.length, 1);
-      assert.ok(t.dialogs[0].text.startsWith("Zotero Atlas never sends your library"));
-      assert.equal(t.dialogs[0].b0, "Send my plugin list");
-      assert.ok(!(t.dialogs[0].flags & (1 << 24)), "Send my plugin list is the default button");
+      assert.ok(t.dialogs[0].text.startsWith("Hold plugin updates until they're checked?"));
+      assert.ok(!/plugin list|send/i.test(t.dialogs[0].text), "nothing about sharing");
+      assert.equal(t.dialogs[0].b0, "Hold updates");
+      assert.equal(t.prefs["extensions.zotero-atlas.updates"], "off");
+    },
+  );
+
+  await run("a new install closed before answering: asked again at the next start", async () => {
+    const t = load({ http: () => ok200(catalogJson([])) });
+    t.s.startup({ id: "a", version: "1.4.0", rootURI: "r/" });
+    t.s.shutdown();
+    const t2 = load({ firstRun: { updates: "hold" }, http: () => ok200(catalogJson([])) });
+    Object.assign(t2.prefs, t.prefs);
+    t2.s.startup({ id: "a", version: "1.4.0", rootURI: "r/" });
+    t2.s.onMainWindowLoad({ window: t2.window });
+    t2.flush();
+    await settle();
+    assert.equal(t2.firstRun, 1);
+    assert.equal(t2.prefs["extensions.zotero-atlas.updates"], "hold");
+  });
+
+  await run(
+    "an update keeps 'Don't send': nothing sent, no ID, holding as it was, nothing asked",
+    async () => {
+      const t = load({ http: () => ok200(catalogJson([])) });
+      t.prefs["extensions.zotero-atlas.usage"] = "no";
+      t.prefs["extensions.zotero-atlas.updates"] = "off";
+      t.s.startup({ id: "a", version: "1.4.0", rootURI: "r/" });
+      t.s.onMainWindowLoad({ window: t.window });
+      t.flush();
+      await settle(20);
       assert.equal(t.prefs["extensions.zotero-atlas.usage"], "no");
-      assert.ok(!t.prefs["extensions.zotero-atlas.updates"], "holding not chosen for them");
+      assert.equal(t.prefs["extensions.zotero-atlas.updates"], "off");
+      assert.ok(NO_REPORT(t), "nothing sent to zoteroatlas.com");
+      assert.ok(!t.prefs["extensions.zotero-atlas.id"], "no ID made");
+      assert.ok(!t.firstRun, "not asked");
+    },
+  );
+
+  await run(
+    "an update keeps sharing and its ID (no new first report); from before 1.0, holding isn't asked",
+    async () => {
+      const t = load({ http: (m) => (m === "POST" ? { status: 204 } : ok200(catalogJson([]))) });
+      t.prefs["extensions.zotero-atlas.usage"] = "yes";
+      t.prefs["extensions.zotero-atlas.id"] = "abc";
+      t.prefs["extensions.zotero-atlas.state"] = JSON.stringify({
+        sentAt: Date.now(),
+        sentHash: "",
+      });
+      t.s.startup({ id: "a", version: "1.4.0", rootURI: "r/" });
+      t.s.onMainWindowLoad({ window: t.window });
+      t.flush();
+      await settle(20);
+      assert.equal(t.prefs["extensions.zotero-atlas.id"], "abc");
+      assert.ok(!t.prefs["extensions.zotero-atlas.updates"], "left for the offer in Your plugins");
+      assert.ok(NO_REPORT(t), "nothing new to send");
+      assert.ok(!t.firstRun, "not asked");
     },
   );
 
   await run(
     "installed while Zotero is open: asked from startup, menu added to the open window",
     async () => {
-      const t = load({ firstRun: { usage: "no" }, http: () => ok200(catalogJson([])) });
+      const t = load({ firstRun: { updates: "hold" }, http: () => ok200(catalogJson([])) });
       t.mainWindows = [t.window];
-      t.s.startup({ id: "a", version: "0.1.0", rootURI: "r/" });
+      t.s.startup({ id: "a", version: "1.4.0", rootURI: "r/" });
       await settle();
       assert.equal(t.ours().length, 1, "menu in the open window");
       assert.equal(t.timers.filter((x) => x.ms === 8000).length, 1, "ask scheduled from startup");
@@ -576,19 +630,18 @@ const run = async (name, fn) => {
       t.flush();
       await settle();
       assert.equal(t.firstRun, 1);
-      assert.equal(t.prefs["extensions.zotero-atlas.usage"], "no");
     },
   );
 
   await run(
     "at Zotero's start: the window comes with the UI-ready promise, asked once",
     async () => {
-      const t = load({ firstRun: { usage: "no" }, http: () => ok200(catalogJson([])) });
+      const t = load({ http: () => ok200(catalogJson([])) });
       let ready;
       t.s.Zotero.uiReadyPromise = new Promise((r) => {
         ready = r;
       });
-      t.s.startup({ id: "a", version: "0.1.0", rootURI: "r/" });
+      t.s.startup({ id: "a", version: "1.4.0", rootURI: "r/" });
       assert.equal(t.ours().length, 0, "no window yet");
       t.mainWindows = [t.window];
       ready();
@@ -601,10 +654,9 @@ const run = async (name, fn) => {
   );
 
   await run(
-    "'Send my plugin list': a random ID and exactly these fields, our own plugin left out",
+    "sharing the plugin list: a random ID and exactly these fields, our own plugin left out",
     async () => {
       const t = load({
-        firstRun: { usage: "yes" },
         http: (m) => (m === "POST" ? { status: 204 } : ok200(catalogJson([]))),
         addons: [
           { id: "b@x", type: "extension", version: "2.0", isActive: false, name: "Secret Name" },
@@ -778,7 +830,7 @@ const run = async (name, fn) => {
   });
 
   await run(
-    "usage: weekly, on change, kept for retry when the server is down, deleted on 'Don't send'",
+    "usage: weekly, on change, kept for retry when the server is down, deleted when the box is unticked",
     async () => {
       let down = false;
       const t = load({

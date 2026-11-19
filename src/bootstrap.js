@@ -4,8 +4,9 @@
  *
  * Finds and installs plugins from zoteroplugins.org inside Zotero, filtered to this Zotero's
  * version, with each plugin's grade, and looks after the plugins already installed:
- * - it can hold an update until the directory has checked it (the first-run screen's
- *   recommended answer, or later in Zotero's settings). An update whose file we analysed and
+ * - it can hold each update until the directory has checked it (the one question on the first-run
+ *   screen, recommended; a setting afterwards, in About and Zotero's settings). An update whose
+ *   file we analysed and
  *   whose grade isn't lower than the version you have installs as usual; anything else waits in
  *   "Your plugins" for you to decide. Plugins the directory doesn't list are never held: we
  *   can't check them. Holding uses Zotero's own install listeners and changes no Zotero setting,
@@ -34,16 +35,17 @@
  *   github.com for a plugin file when you click Install or go back to an earlier version.
  *   Zotero's own installer downloads the file and refuses it unless it matches the SHA-256 we
  *   analysed.
- * - zoteroatlas.com, only while "Send my plugin list" is chosen (the first-run screen's default
- *   answer, or later in Zotero's settings): the installed plugins' IDs, versions and whether
- *   each is enabled, under a random ID made on this computer, with the Zotero version, the
- *   operating system and this plugin's version. Sent at first run, when that list changes, and
- *   once a week. Choosing "Don't send" sends one request to delete the record. Nothing from your
- *   library, no account, nothing that identifies you.
+ * - zoteroatlas.com, while "Share my plugin list" is ticked (it is on a new install, and stays as
+ *   it was on an update; the box is at the bottom of About in the Atlas window, and in Zotero's
+ *   settings): the installed plugins' IDs, versions and whether each is enabled, under a random
+ *   ID made on this computer, with the Zotero version, the operating system and this plugin's
+ *   version. Sent shortly after it's installed, when that list changes, and once a week.
+ *   Unticking it sends one request to delete the record. Nothing from your library, no account,
+ *   nothing that identifies you.
  * - zoteroatlas.com, when you post a rating: the plugin and version you rate, your stars and
  *   review, the Zotero version, the operating system and this plugin's version, a scrambled ID
- *   for this Zotero (so rating again replaces your rating) and, while "Send my plugin list" is
- *   chosen, the random ID above (so the rating can say how long you had the plugin).
+ *   for this Zotero (so rating again replaces your rating) and, while "Share my plugin list" is
+ *   ticked, the random ID above (so the rating can say how long you had the plugin).
  *
  * What it stores: four settings (extensions.zotero-atlas.usage, .updates, .id, .state) and the
  * catalogue and advisories in <Zotero data directory>/zotero-atlas/. Uninstalling removes all
@@ -77,8 +79,10 @@ function openPage(url) {
   Zotero.launchURL(url);
 }
 const PREF = {
-  usage: "extensions.zotero-atlas.usage", // "" (not asked yet), "yes" or "no"
-  updates: "extensions.zotero-atlas.updates", // "" (not asked yet), "hold" or "off"
+  usage: "extensions.zotero-atlas.usage", // "yes" or "no"; "" only before the first start
+  // "hold" or "off"; "ask" from a new install until the first-run screen is answered (not holding
+  // meanwhile); "" from before 1.0, when it wasn't asked ("Your plugins" offers it): not holding.
+  updates: "extensions.zotero-atlas.updates",
   id: "extensions.zotero-atlas.id", // the random ID, only while usage is "yes"
   state: "extensions.zotero-atlas.state", // JSON, see state()
 };
@@ -131,7 +135,7 @@ const allowOnce = new Set(); // "id@version": installs Atlas started or you allo
 
 // Nothing to set up, and nothing to clear: Zotero 7–10 call install() with ADDON_INSTALL for an
 // update too (plugins.js forgets the old version in onInstalling, before onInstalled reads it), so
-// clearing here wiped the first-run answers, the ID and what Atlas remembers on every update. A
+// clearing here wiped the sharing and holding choices, the ID and what Atlas remembers on every update. A
 // removal clears everything in uninstall(), which Zotero does call with ADDON_UNINSTALL, so a
 // later install still starts with nothing.
 function install() {}
@@ -148,6 +152,14 @@ function startup({ id, version: v, rootURI: root }) {
     ["content", "zotero-atlas", "content/"],
   ]);
   Zotero.ZoteroAtlas = Atlas;
+  // A new install: sharing the plugin list starts on, without a question (the box in About, or
+  // Zotero's settings, turns it off), and holding updates is asked on the first-run screen. An
+  // update keeps whatever was chosen before, "Don't send" included. Set before the observers, so
+  // this sends nothing by itself: the first check, a little later, sends the first report.
+  if (!pref(PREF.usage)) {
+    setPref(PREF.usage, "yes");
+    if (!pref(PREF.updates)) setPref(PREF.updates, "ask");
+  }
   Services.prefs.addObserver(PREF.usage, onUsagePref);
   Services.prefs.addObserver(PREF.updates, onUpdatesPref);
   Zotero.PreferencePanes.register({
@@ -225,10 +237,11 @@ function onMainWindowUnload({ window }) {
   removeFromWindow(window);
 }
 
-// The first-run screen, once per session, a moment after the window is there. Someone who
-// answered the usage question before 1.0 isn't asked again: "Your plugins" offers holding.
+// The first-run screen, once per session, a moment after the window is there, until it's answered:
+// whether to hold plugin updates. Only a new install is asked ("ask"); someone from before 1.0
+// ("") gets the offer in "Your plugins" instead.
 function maybeAsk(window) {
-  if (asked || pref(PREF.usage)) return;
+  if (asked || pref(PREF.updates) !== "ask") return;
   asked = true;
   askTimer = setTimeout(() => ask(window), ASK_DELAY);
 }
@@ -1835,22 +1848,18 @@ async function rate(r, win) {
   return { ok: true, message: "Thanks. Your rating is in." };
 }
 
-// ---------------------------------------------------------------------------------------------
-// The first-run screen: holding updates, and usage data
-
 const ASK_TEXT =
-  "Zotero Atlas never sends your library, notes, files, Zotero account, email or anything " +
-  "that identifies you.\n\n" +
-  'With "Send my plugin list" it sends one thing: the list of plugins installed in this ' +
-  "Zotero, with their versions, under a random ID created on this computer. We use the " +
-  "totals to see which plugins people actually use, and we don't publish them.\n\n" +
-  "You can change this any time in Zotero's settings, under Zotero Atlas.";
+  "Hold plugin updates until they're checked? (Recommended)\n\n" +
+  "Zotero installs plugin updates by itself without looking at what changed. With this on, an " +
+  "update we've checked that isn't graded lower installs as usual, usually within a day. " +
+  "Anything else waits for you in Zotero Atlas.\n\n" +
+  "You can change this any time in Zotero Atlas, under About.";
 
 function ask(window) {
   askTimer = null;
-  if (pref(PREF.usage)) return;
-  // Both answers start at the recommended choice; closing the screen keeps them.
-  const answer = { usage: "yes", updates: "hold", done: false };
+  if (pref(PREF.updates) !== "ask") return;
+  // The recommended answer to start with; closing the screen keeps it.
+  const answer = { updates: "hold", done: false };
   answer.wrappedJSObject = answer;
   try {
     (window || Zotero.getMainWindow()).openDialog(
@@ -1860,7 +1869,7 @@ function ask(window) {
       answer,
     );
   } catch (e) {
-    // The screen couldn't open: ask the one question that needs an answer the plain way.
+    // The screen couldn't open: the same question, the plain way.
     Zotero.debug(`Zotero Atlas: first-run screen failed: ${e}`);
     const p = Services.prompt;
     const flags =
@@ -1872,22 +1881,19 @@ function ask(window) {
       "Zotero Atlas",
       ASK_TEXT,
       flags,
-      "Send my plugin list",
-      "Don't send",
+      "Hold updates",
+      "Leave them to Zotero",
       null,
       null,
       {},
     );
-    answer.usage = choice === 0 ? "yes" : "no";
-    answer.updates = "";
+    answer.updates = choice === 1 ? "off" : "hold";
   }
-  if (answer.updates) setPref(PREF.updates, answer.updates === "hold" ? "hold" : "off");
-  setPref(PREF.usage, answer.usage === "no" ? "no" : "yes");
-  changed();
+  setPref(PREF.updates, answer.updates === "off" ? "off" : "hold");
 }
 
 // ---------------------------------------------------------------------------------------------
-// Usage data: only after "Send my plugin list"
+// Usage data: only while "Share my plugin list" is ticked
 
 function newId() {
   return Services.uuid.generateUUID().toString().replace(/[{}]/g, "");
@@ -1936,6 +1942,8 @@ async function send(event, addons) {
 async function maybeSend(addons) {
   if (pref(PREF.usage) !== "yes") return false;
   const st = state();
+  // "first-run" is the server's name for an install's first report (it may come soon after
+  // another one), whether it follows a new install or the box being ticked again.
   if (!st.sentAt) return send("first-run", addons);
   if (pluginsHash(addons) !== st.sentHash) return send("changed", addons);
   if (Date.now() - st.sentAt > WEEK) return send("weekly", addons);
@@ -1966,11 +1974,13 @@ function onUpdatesPref() {
   changed();
 }
 
-// The choice changed, from the first-run screen or the settings pane.
+// The box was ticked or unticked, in About or the settings pane.
 function onUsagePref() {
   const choice = pref(PREF.usage);
-  if (choice === "yes") installed().then((a) => send("first-run", a));
-  else forget();
+  const done = choice === "yes" ? installed().then((a) => send("first-run", a)) : forget();
+  changed();
+  // Again once it's sent or deleted, for the "last sent" line in About.
+  done.catch(() => {}).then(() => started && changed());
 }
 
 // ---------------------------------------------------------------------------------------------

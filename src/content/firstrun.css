@@ -6,8 +6,6 @@
   --line: #dde0ea;
   --on: #2f6fdf;
   --on-bg: #f2f6fe;
-  --never-bg: #eef7f1;
-  --never-fg: #0d4d27;
   --foot: #fafafc;
 }
 @media (prefers-color-scheme: dark) {
@@ -18,8 +16,6 @@
     --line: #3b3e47;
     --on: #7aa7ff;
     --on-bg: #232c3d;
-    --never-bg: #18301f;
-    --never-fg: #a8e0b8;
     --foot: #1a1b1f;
   }
 }
@@ -56,14 +52,6 @@ h2 {
   font-size: 12.5px;
   color: var(--muted);
   margin: 2px 0 0;
-}
-.never {
-  margin: 0 22px;
-  padding: 10px 12px;
-  border-radius: 9px;
-  background: var(--never-bg);
-  color: var(--never-fg);
-  font-weight: 600;
 }
 section {
   padding: 14px 22px 2px;
@@ -104,25 +92,6 @@ section {
   font-size: 11px;
   font-weight: 700;
 }
-.linkish {
-  border: 0;
-  background: transparent;
-  color: var(--on);
-  padding: 0 2px;
-  font: inherit;
-  font-size: 12.5px;
-  text-decoration: underline;
-  cursor: pointer;
-}
-pre {
-  max-height: 180px;
-  overflow: auto;
-  font-size: 11px;
-  padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  white-space: pre-wrap;
-}
 footer {
   display: flex;
   align-items: center;
@@ -148,8 +117,7 @@ footer .d {
   cursor: pointer;
 }
 .opt:focus-within,
-.primary:focus-visible,
-.linkish:focus-visible {
+.primary:focus-visible {
   outline: 2px solid var(--on);
   outline-offset: 2px;
 }

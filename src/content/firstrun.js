@@ -1,6 +1,7 @@
 /* global Zotero, window, document */
-// The first-run screen: two answers, both starting at the recommended choice. bootstrap.js
-// passes an object in window.arguments and reads the answers back when the screen closes.
+// The first-run screen: one answer, whether to hold plugin updates until they're checked,
+// starting at the recommended choice. bootstrap.js passes an object in window.arguments and
+// reads the answer back when the screen closes; closing it any other way keeps the tick.
 (() => {
   const A = Zotero.ZoteroAtlas;
   const $ = (id) => document.getElementById(id);
@@ -8,30 +9,12 @@
 
   function paint() {
     $("hold-opt").classList.toggle("on", $("hold").checked);
-    $("yes-opt").classList.toggle("on", $("yes").checked);
-    $("no-opt").classList.toggle("on", $("no").checked);
     answer.updates = $("hold").checked ? "hold" : "off";
-    answer.usage = $("no").checked ? "no" : "yes";
   }
 
   window.addEventListener("load", () => {
-    for (const id of ["hold", "yes", "no"]) $(id).addEventListener("change", paint);
+    $("hold").addEventListener("change", paint);
     paint();
-    $("show").addEventListener("click", async () => {
-      const out = $("sent");
-      if (!out.hidden) {
-        out.hidden = true;
-        return;
-      }
-      try {
-        out.textContent = JSON.stringify(await A.usage.payload("first-run"), null, 2);
-      } catch (_e) {
-        out.textContent = "The list couldn't be read.";
-      }
-      out.hidden = false;
-      window.sizeToContent?.();
-      A.keepOnScreen?.(window);
-    });
     $("done").addEventListener("click", () => {
       paint();
       answer.done = true;
